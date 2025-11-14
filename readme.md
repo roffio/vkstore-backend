@@ -1,10 +1,30 @@
-# RuStore MVP API - Эндпоинты
+## RuStore MVP API - Эндпоинты (Refined + Full Comments)
 
-## Общая структура
+Реализованы все эндпоинты, кроме 2.1, 6(6.1-6.5.2)
 
-Все эндпоинты используют метод **GET**, так как они только читают данные.
+Результаты всех запросов обернуты в объект:
 
-### 1. Список приложений с фильтрацией и поиском
+```json
+{
+  "response_code": 200,
+  "data": {}
+}
+```
+
+Сервер жив, если по запросу
+```
+GET /ping
+```
+вовращается
+```
+{
+    "responce_code":200,
+    "data":"Pong"
+}
+```
+---
+
+## 1. Список приложений с фильтрацией и поиском
 
 ```
 GET /apps
@@ -15,62 +35,119 @@ GET /apps
 * `tag` - категория приложения
 * `filter` - фильтры: `new`, `popular`, `redaction`
 * `search` - строка поиска по названию
-* `sort` - сортировка по `downloads`, `rating`, 
-* `order` - по возрастанию/убыванию - `asc`/`dsc`
+* `sort` - сортировка по `downloads`, `rating`
+* `order` - по возрастанию/убыванию: `asc`/`desc`
 
-**Примеры:**
+**Пример:**
 
 ```
-GET /apps?tag=Игры&filter=popular&search=Battle
-GET /apps?filter=new
-GET /apps?search=Calculator
+GET  /apps?tag=games&filter=popular&search=roffio
 ```
 
-**Ответ JSON (пример одного приложения):**
+**Ответ JSON:**
 
 ```json
 {
-    "AppName": "Example Name",
-    "SmallIconID": 12345,
-    "BigIconID": 12345,
-    "AppCardScreenshotsIDs": [12345, 12345],
-    "Rating": 5,
-    "Downloads": 5000000,
-    "Categories": ["Игры", "Развлечения"],
-    "DeveloperName": "Bob",
-    "DeveloperID": 12345,
-    "ReleaseDate": "2025-11-14T18:30:00Z", // iso8601
-    "AgeRestriction": "0+",
-    "Description": "Lorem Ipsum",
-    "EditorChoice": true,
-    "SimilarApps": [123,456]
-    // Отзывы? (WIP)
+  "responce_code": 200,
+  "data": [
+    {
+      "AppID": 1,
+      "AppName": "Generic App 1",
+      "SmallIconID": 1,
+      "BigIconID": 1,
+      "AppCardScreenshotsIDs": null,
+      "Rating": 4,
+      "Downloads": 100000,
+      "Categories": "games",
+      "DeveloperName": "roffio",
+      "DeveloperID": 1,
+      "ReleaseDate": "2025-11-14T18:30:00Z",
+      "AgeRestriction": "0+",
+      "Description": "A very VERY good app not a test at all don't mind the LORES IPSUM\r\n",
+      "EditorChoice": 0,
+      "SimilarApps": ""
+    }
+  ]
 }
 ```
 
-### 2. Карточка конкретного приложения
+---
+
+## 2. Карточка конкретного приложения
 
 ```
 GET /apps/{app_id}
+Authorization: Bearer <VK_ACCESS_TOKEN> (опционально)
 ```
 
-**Параметры:**
+**Ответ JSON:**
 
-* `app_id` - ID приложения
+```json
+{
+  "responce_code": 200,
+  "data": {
+    "AppID": 2,
+    "AppName": "Generic App 2",
+    "SmallIconID": 1,
+    "BigIconID": 1,
+    "AppCardScreenshotsIDs": null,
+    "Rating": 3.9,
+    "Downloads": 500,
+    "Categories": "sport",
+    "DeveloperName": "roffio",
+    "DeveloperID": 1,
+    "ReleaseDate": "2025-11-14T18:30:00Z",
+    "AgeRestriction": "0+",
+    "Description": "The ORIGINAL\t\t\t\tstarwalker",
+    "EditorChoice": 0,
+    "SimilarApps": ""
+  }
+}
+```
+(Коментарии пока не делал)
+---
 
-**Ответ JSON:** как выше.
+## 2.1. Полная загрузка комментариев (WIP)
 
-### 3. Загрузка конкретного приложения
+```
+GET /apps/{app_id}/load-comments?page=2&limit=20
+Authorization: Bearer <VK_ACCESS_TOKEN>
+```
+
+**Ответ JSON:**
+
+```json
+{
+  "response_code": 200,
+  "data": {
+    "page": 2,
+    "limit": 20,
+    "total": 125,
+    "comments": [
+      {
+        "comment_id": 110,
+        "vk_id": "vk777",
+        "text": "Не понравилось обновление.",
+        "likes": 2,
+        "dislikes": 5,
+        "created_at": "2025-11-15T12:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+## 3. Загрузка APK приложения
+
 ```
 GET /apps/{app_id}/download
 ```
-**Параметры:**
 
-* `app_id` - ID приложения
+Возвращает APK через поток (`StreamingResponse`).
 
-Так же возвращает апк потоком через FileResponce
-
-### 4. Список категорий (тэгов)
+## 4. Список категорий (тэгов)
 
 ```
 GET /tags
@@ -79,28 +156,198 @@ GET /tags
 **Ответ JSON:**
 
 ```json
-["Финансы", "Игры", "Инструменты", "Транспорт", "Государственные"]
+{
+  "responce_code": 200,
+  "data": [
+    "sport",
+    "games"
+  ]
+}
 ```
 
-### 5. Изображения
+---
+
+## 5. Изображения
 
 ```
-GET /images?ids=123,456,789
+GET /images/{image_id}
 ```
 
-Возвращает изображение напрямую через биинарный поток
+Возвращает бинарный поток изображения. Не забывайте проверять формат
 
-### 6. Пользовательские штучки
+## 6. Пользовательский модуль (VK OAuth) (WIP)
 
-что-то что-то интеграция с вк что-то что-то кукисы исторя просмотров и скачиваний гемификация уровень аккаунта (WIP)
+Все защищённые действия требуют токен в заголовке `Authorization: Bearer <VK_ACCESS_TOKEN>`.
 
-
-### Примеры URL
+### 6.1. Регистрация пользователя
 
 ```
-GET /apps?tag=Игры&filter=popular
-GET /apps?search=Calculator
-GET /apps/42
-GET /tags
-GET /images?ids=123,456
+POST /users
+```
+
+**Тело запроса:**
+
+```json
+{ "username": "Ivan" }
+```
+
+**Ответ:**
+
+```json
+{
+  "response_code": 201,
+  "data": {
+    "id": 1,
+    "vk_id": "vk123456",
+    "username": "Ivan",
+    "level": 1,
+    "points": 0,
+    "created_at": "2025-11-14T18:30:00Z"
+  }
+}
+```
+
+---
+
+### 6.2. Профиль текущего пользователя
+
+```
+GET /users/me
+```
+
+---
+
+### 6.3. История посещений и скачиваний
+
+* `POST /apps/{app_id}/visited` — фиксация открытия приложения.
+* `POST /apps/{app_id}/download` — фиксация скачивания.
+  **Ответ JSON:**
+
+```json
+{ "response_code": 200, "data": { "status": "ok", "message": "Visit/Download recorded" } }
+```
+
+---
+
+### 6.4. Статистика пользователя
+
+```
+GET /users/me/stats
+```
+
+**Ответ JSON:**
+
+```json
+{
+  "response_code": 200,
+  "data": {
+    "visited_apps_count": 25,
+    "downloaded_apps_count": 5,
+    "visited_apps_ids": [12, 34, 56, 78],
+    "downloaded_apps_ids": [12, 56],
+    "favorite_categories": ["Игры", "Финансы", "Инструменты"],
+    "badges": ["Исследователь игр", "Гуру финансов"],
+    "level": 2,
+    "points": 150
+  }
+}
+```
+
+---
+
+### 6.5. Комментарии к приложениям
+
+#### 6.5.1. Добавление комментария
+
+```
+POST /apps/{app_id}/comment
+```
+
+**Тело запроса:**
+
+```json
+{ "text": "Отличное приложение!" }
+```
+
+**Ответ:**
+
+```json
+{ "response_code": 201, "data": { "comment_id": 101, "status": "ok", "message": "Comment added" } }
+```
+
+#### 6.5.2. Получение комментариев
+
+```
+GET /apps/{app_id}/comments
+```
+
+**Ответ JSON:**
+
+```json
+{
+  "response_code": 200,
+  "data": [
+    {
+      "comment_id": 101,
+      "vk_id": "vk123456",
+      "text": "Отличное приложение, очень удобное!",
+      "likes": 5,
+      "dislikes": 0,
+      "created_at": "2025-11-14T18:30:00Z"
+    },
+    {
+      "comment_id": 102,
+      "vk_id": "vk654321",
+      "text": "Можно улучшить интерфейс",
+      "likes": 2,
+      "dislikes": 1,
+      "created_at": "2025-11-14T19:10:00Z"
+    }
+  ]
+}
+```
+
+#### 6.5.3. Лайк/дизлайк комментария
+
+```
+POST /comments/{comment_id}/vote
+```
+
+**Тело запроса:**
+
+```json
+{ "vote": "like" } // или "dislike"
+```
+
+**Ответ JSON:**
+
+```json
+{ "response_code": 200, "data": { "status": "ok", "message": "Vote recorded", "likes": 6, "dislikes": 0 } }
+```
+
+---
+
+## 7. Ошибки и коды
+
+```json
+{
+  "response_code": 400,
+  "data": {"error": "Bad Request"}
+}
+{
+  "response_code": 401,
+  "data": {"error": "Unauthorized - Invalid or missing VK token"}
+}
+{
+  "response_code": 403,
+  "data": {"error": "Forbidden - Action not allowed"}
+}
+{
+  "response_code": 404,
+  "data": {"error": "Not Found"}
+}
+{
+  "response_code": 500,
+  "data": {"error": "Internal Server Error"}
+}
 ```
