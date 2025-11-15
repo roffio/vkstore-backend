@@ -1140,3 +1140,127 @@ def me(current_user: sqlite3.Row = Depends(get_current_user)):
         },
         200,
     )
+
+
+@app.post("/images/upload-sequential") # Бебебе, да, уязвимо, бюджет не дали
+async def upload_image_sequential(file: UploadFile = File(...)):
+    img_dir = Path(__file__).resolve().parent / "img"
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_files = list(img_dir.glob("*"))
+    max_num = 0
+    for f in existing_files:
+        try:
+            num = int(f.stem)
+            if num > max_num:
+                max_num = num
+        except ValueError:
+            continue
+
+    ext = Path(file.filename).suffix
+    new_num = max_num + 1
+    new_name = f"{new_num}{ext}"
+    file_path = img_dir / new_name
+
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
+    return wrap_responce({"id": new_num}, 201)
+
+
+@app.post("/apk/upload-sequential")
+async def upload_apk(file: UploadFile = File(...)):
+    apk_dir = Path(__file__).resolve().parent / "app"
+    apk_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_files = list(apk_dir.glob("*"))
+    max_num = 0
+    for f in existing_files:
+        try:
+            num = int(f.stem)
+            if num > max_num:
+                max_num = num
+        except ValueError:
+            continue
+
+    ext = Path(file.filename).suffix
+    new_num = max_num + 1
+    new_name = f"{new_num}{ext}"
+    file_path = apk_dir / new_name
+
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
+    return wrap_responce({"id": new_num}, 201)
+
+
+
+class AppCreate(BaseModel):
+    AppName: str
+    SmallIconID: Optional[str] = None
+    BigIconID: Optional[str] = None
+    AppCardScreenshotsIDs: Optional[str] = None
+    Rating: Optional[float] = 0
+    Downloads: Optional[int] = 0
+    Categories: Optional[str] = None
+    DeveloperName: Optional[str] = None
+    DeveloperID: Optional[int] = None
+    ReleaseDate: Optional[str] = None  
+    AgeRestriction: Optional[int] = 0
+    Description: Optional[str] = None
+    EditorChoice: Optional[int] = 0
+    SimilarApps: Optional[str] = None
+    CommentListID: Optional[int] = None
+
+
+@app.post("/apps/create")
+def create_app(data: AppCreate):
+
+    conn = sqlite3.connect(DB_FILENAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO Apps (
+            AppName,
+            SmallIconID,
+            BigIconID,
+            AppCardScreenshotsIDs,
+            Rating,
+            Downloads,
+            Categories,
+            DeveloperName,
+            DeveloperID,
+            ReleaseDate,
+            AgeRestriction,
+            Description,
+            EditorChoice,
+            SimilarApps,
+            CommentListID
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            data.AppName,
+            data.SmallIconID,
+            data.BigIconID,
+            data.AppCardScreenshotsIDs,
+            data.Rating,
+            data.Downloads,
+            data.Categories,
+            data.DeveloperName,
+            data.DeveloperID,
+            data.ReleaseDate,
+            data.AgeRestriction,
+            data.Description,
+            data.EditorChoice,
+            data.SimilarApps,
+            data.CommentListID,
+        )
+    )
+
+    new_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    return wrap_responce({"AppID": new_id}, 201)
