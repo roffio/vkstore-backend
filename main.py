@@ -19,7 +19,7 @@ origins = [
     "https://www.commit-store.ru",
     "http://localhost:5173",
     "http://localhost:3000",
-    "https://vk-store-admin-panel-cvw1.vercel.app"
+    "https://vk-store-admin-panel-ebzq.vercel.app"
 ]
 
 app.add_middleware(
