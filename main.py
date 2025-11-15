@@ -1,5 +1,3 @@
-
-
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,7 +25,7 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "super‑secret")
 EMAIL_SENDER = "sergeevnicolas20@gmail.com"
 
 EMAIL_PASSWORD = "tjuk hxyy uvys rikv"
-SERVER_NAME = "localhost:8000"
+SERVER_NAME = "https://commit-store.ru"
 
 # SQLite database filename
 DB_FILENAME = "db.db"
