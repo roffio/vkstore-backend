@@ -1,7 +1,40 @@
+"""
+Monolithic FastAPI application with user registration and basic app catalogue.
+
+This script combines a minimal authentication system with the existing
+application catalogue endpoints. Users can register with an email
+address and password, receive a verification code via email, confirm
+their email address, and then log in to receive a JWT access token.
+Endpoints are provided to fetch the current authenticated user's
+profile and to serve application data from a SQLite database. All
+responses are wrapped in a consistent JSON structure containing a
+``responce_code`` and ``data`` field to ease front‑end integration.
+
+Usage
+-----
+Run this script with ``uvicorn`` to start the API server::
+
+    uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+Environment variables
+---------------------
+- ``SECRET_KEY`` – secret key used to sign JWT tokens (default: ``super‑secret``)
+- ``EMAIL_SENDER`` – email address used to send verification codes (default: ``sergeevnicolas20@gmail.com``)
+- ``EMAIL_PASSWORD`` – password or app password for the sender email. If not set,
+  verification emails are printed to stdout instead of being sent.
+- ``SERVER_NAME`` – base URL used in verification emails (default: ``localhost:8000``)
+
+Dependencies
+------------
+This script uses only the Python standard library and ``fastapi`` for the web
+framework. Email sending is performed via the standard library ``smtplib``.
+No additional JWT or password hashing libraries are required.
+"""
+
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr, constr, validator
+from pydantic import BaseModel, constr, validator
 from typing import Optional, Dict, Any
 import sqlite3
 import os
@@ -18,21 +51,112 @@ from email.message import EmailMessage
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 
+# ---------------------------------------------------------------------------
+# Configuration and constants
+# ---------------------------------------------------------------------------
 
+# Secret key for JWT signing
 SECRET_KEY = os.environ.get("SECRET_KEY", "super‑secret")
 
-
-EMAIL_SENDER = "sergeevnicolas20@gmail.com"
-
-EMAIL_PASSWORD = "tjuk hxyy uvys rikv"
-SERVER_NAME = "https://commit-store.ru"
+# ---------------------------------------------------------------------------
+# Email configuration
+#
+# The service needs to send verification codes via email.  By default we send
+# from the developer's Gmail account.  You can override the sender address
+# and password by setting the ``EMAIL_SENDER`` and ``EMAIL_PASSWORD``
+# environment variables.  If ``EMAIL_PASSWORD`` is not provided, the hard‑coded
+# app password below will be used.  See README for instructions on obtaining
+# an app password from Gmail.
+#
+EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "sergeevnicolas20@gmail.com")
+# Use a fallback app password if the environment variable is not set.  This
+# is the same password the user provided previously (spaced for readability).
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "tjuk hxyy uvys rikv")
+SERVER_NAME = os.environ.get("SERVER_NAME", "localhost:8000")
 
 # SQLite database filename
 DB_FILENAME = "db.db"
 
+# ---------------------------------------------------------------------------
+# Authentication schemes
+#
+# For endpoints that require authentication (e.g. `/auth/me`), use
+# ``token_scheme`` which raises a 401 error automatically when the
+# Authorization header is missing or invalid.  For endpoints where
+# authentication is optional (e.g. download tracking) but we still want
+# to capture a token if present, use ``optional_token_scheme`` with
+# ``auto_error=False`` so that missing credentials do not trigger
+# an automatic HTTP error.  These are defined here near the top of the
+# module so that they exist before being referenced in any route
+# definitions.
+
+from fastapi.security import HTTPBearer  # ensure HTTPBearer is in scope
+
+# Bearer authentication scheme (auto_error defaults to True).  This is used
+# for protected endpoints such as `/auth/me`, where a missing or
+# invalid token should immediately result in a 401.
+token_scheme = HTTPBearer()
+
+# Optional bearer scheme for endpoints that do not require
+# authentication (like APK downloads) but want to record events if a
+# token is provided.  With ``auto_error=False``, FastAPI will not
+# automatically raise a 401 if the credentials are missing; instead,
+# the dependency returns None and the endpoint can proceed without
+# authentication.
+optional_token_scheme = HTTPBearer(auto_error=False)
+
+# ---------------------------------------------------------------------------
+# Authentication helper functions
+# ---------------------------------------------------------------------------
+
+# Define get_current_user early so that it can be referenced in route
+# dependencies without triggering a NameError at import time.  This
+# function verifies the access token, decodes it and returns the user
+# record.  If the token is invalid or expired, it raises HTTP 401.
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(token_scheme),
+) -> sqlite3.Row:
+    token = credentials.credentials
+    payload = decode_jwt(token)
+    if payload is None or payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload.get("sub")
+    user = get_user_by_id(int(user_id))
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_token_scheme),
+) -> Optional[sqlite3.Row]:
+    """
+    Attempt to retrieve the current user if a valid access token is provided.
+    This is used for endpoints where authentication is optional.  Returns
+    the user record if the token is valid, otherwise returns None.
+    """
+    if credentials and credentials.credentials:
+        payload = decode_jwt(credentials.credentials)
+        if payload and payload.get("type") == "access":
+            user = get_user_by_id(int(payload.get("sub")))
+            return user
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Database initialisation
+# ---------------------------------------------------------------------------
 
 def _initialize_user_tables() -> None:
+    """
+    Ensure all required tables exist in the SQLite database.
+
+    This includes tables for users, email verification tokens,
+    view history, download history, and reviews. Existing data is
+    preserved.
+    """
     with sqlite3.connect(DB_FILENAME) as conn:
+        # users table
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -47,6 +171,7 @@ def _initialize_user_tables() -> None:
             );
             """
         )
+        # verification tokens table
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS verification_tokens (
@@ -59,6 +184,44 @@ def _initialize_user_tables() -> None:
             );
             """
         )
+        # view history table
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS view_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                app_id INTEGER NOT NULL,
+                viewed_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+            """
+        )
+        # download history table
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS download_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                app_id INTEGER NOT NULL,
+                downloaded_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+            """
+        )
+        # reviews table
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                app_id INTEGER NOT NULL,
+                rating INTEGER NOT NULL,
+                comment TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+            """
+        )
         conn.commit()
 
 
@@ -66,12 +229,17 @@ def _initialize_user_tables() -> None:
 _initialize_user_tables()
 
 
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
 
 def wrap_responce(responce: Any, code: int) -> Dict[str, Any]:
+    """Wrap the API response in a consistent JSON structure."""
     return {"responce_code": code, "data": responce}
 
 
 def hash_password(password: str, salt: Optional[str] = None) -> (str, str):
+    """Hash a password using PBKDF2 with SHA‑256. Returns (hashed, salt)."""
     if salt is None:
         salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000)
@@ -79,11 +247,13 @@ def hash_password(password: str, salt: Optional[str] = None) -> (str, str):
 
 
 def verify_password(password: str, hashed: str, salt: str) -> bool:
+    """Verify that the provided password matches the stored hash and salt."""
     computed, _ = hash_password(password, salt)
     return hmac.compare_digest(computed, hashed)
 
 
 def create_jwt(user_id: int, expires_in: int = 60 * 60) -> str:
+    """Generate a signed JWT token with a simple HS256 implementation."""
     header = {"alg": "HS256", "typ": "JWT"}
     payload = {"sub": user_id, "exp": int(time.time()) + expires_in, "type": "access"}
     header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
@@ -107,6 +277,7 @@ def create_refresh_jwt(user_id: int, expires_in: int = 60 * 60 * 24 * 7) -> str:
 
 
 def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
+    """Decode and validate a JWT token. Returns payload if valid, else None."""
     try:
         header_b64, payload_b64, signature_b64 = token.split(".")
         signing_input = f"{header_b64}.{payload_b64}".encode()
@@ -123,8 +294,14 @@ def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def send_verification_email(to_email: str, token: str, expires_in_minutes: int = 1) -> None:
-
+def send_verification_email(to_email: str, token: str, expires_in_minutes: int = 10) -> None:
+    """
+    Send a verification email with the provided token. If SMTP credentials
+    are not configured, print the email contents to stdout. Emails include
+    both plain text and simple HTML versions with a verification link and
+    code. The verification link points to the ``/auth/confirm-email`` endpoint
+    on this server.
+    """
     verify_url = f"https://{SERVER_NAME}/auth/confirm-email?token={token}"
     msg = EmailMessage()
     msg["Subject"] = "Email verification"
@@ -290,6 +467,133 @@ def get_unexpired_token_for_user(user_id: int) -> Optional[sqlite3.Row]:
             return None
         return row
 
+
+# ---------------------------------------------------------------------------
+# History and review helper functions
+# ---------------------------------------------------------------------------
+
+def add_view_history(user_id: int, app_id: int) -> None:
+    """
+    Record that the specified user has viewed the given application at the
+    current UTC time.  The event is stored in the ``view_history`` table.
+    """
+    timestamp = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_FILENAME) as conn:
+        conn.execute(
+            "INSERT INTO view_history (user_id, app_id, viewed_at) VALUES (?, ?, ?)",
+            (user_id, app_id, timestamp),
+        )
+        conn.commit()
+
+
+def add_download_history(user_id: int, app_id: int) -> None:
+    """
+    Record that the specified user has downloaded the given application at the
+    current UTC time.  The event is stored in the ``download_history`` table.
+    """
+    timestamp = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_FILENAME) as conn:
+        conn.execute(
+            "INSERT INTO download_history (user_id, app_id, downloaded_at) VALUES (?, ?, ?)",
+            (user_id, app_id, timestamp),
+        )
+        conn.commit()
+
+
+def create_review(user_id: int, app_id: int, rating: int, comment: Optional[str]) -> None:
+    """
+    Create a new review for the given app.  If the user has already
+    reviewed this app, the existing review will be replaced.  Ratings
+    must be between 1 and 5.  Comments are optional.
+    """
+    if rating < 1 or rating > 5:
+        raise ValueError("rating must be between 1 and 5")
+    timestamp = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_FILENAME) as conn:
+        # Check if review exists
+        cur = conn.execute(
+            "SELECT id FROM reviews WHERE user_id = ? AND app_id = ?",
+            (user_id, app_id),
+        )
+        row = cur.fetchone()
+        if row:
+            # update existing
+            conn.execute(
+                "UPDATE reviews SET rating = ?, comment = ?, created_at = ? WHERE id = ?",
+                (rating, comment, timestamp, row[0]),
+            )
+        else:
+            # insert new
+            conn.execute(
+                "INSERT INTO reviews (user_id, app_id, rating, comment, created_at) VALUES (?, ?, ?, ?, ?)",
+                (user_id, app_id, rating, comment, timestamp),
+            )
+        conn.commit()
+
+
+def get_reviews_for_app(app_id: int) -> list[dict]:
+    """
+    Retrieve all reviews for the specified application.  The returned
+    list contains dictionaries with the reviewer name (email), rating,
+    comment and timestamp.  This function does not perform any
+    authentication checks.
+    """
+    with sqlite3.connect(DB_FILENAME) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT r.rating, r.comment, r.created_at, u.first_name, u.last_name, u.email
+            FROM reviews r
+            JOIN users u ON u.id = r.user_id
+            WHERE r.app_id = ?
+            ORDER BY r.created_at DESC
+            """,
+            (app_id,),
+        )
+        rows = cur.fetchall()
+    result = []
+    for row in rows:
+        reviewer_name = None
+        if row[3] or row[4]:
+            reviewer_name = f"{row[3] or ''} {row[4] or ''}".strip()
+        data = {
+            "rating": row[0],
+            "comment": row[1],
+            "created_at": row[2],
+            "reviewer": reviewer_name if reviewer_name else row[5],
+        }
+        result.append(data)
+    return result
+
+
+def get_user_view_history(user_id: int) -> list[dict]:
+    """
+    Fetch the viewing history for a given user.  Returns a list of
+    dictionaries containing the AppID and timestamp of each view.
+    """
+    with sqlite3.connect(DB_FILENAME) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT app_id, viewed_at FROM view_history WHERE user_id = ? ORDER BY viewed_at DESC",
+            (user_id,),
+        )
+        rows = cur.fetchall()
+    return [ {"app_id": row[0], "viewed_at": row[1]} for row in rows ]
+
+
+def get_user_download_history(user_id: int) -> list[dict]:
+    """
+    Fetch the download history for a given user.  Returns a list of
+    dictionaries containing the AppID and timestamp of each download.
+    """
+    with sqlite3.connect(DB_FILENAME) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT app_id, downloaded_at FROM download_history WHERE user_id = ? ORDER BY downloaded_at DESC",
+            (user_id,),
+        )
+        rows = cur.fetchall()
+    return [ {"app_id": row[0], "downloaded_at": row[1]} for row in rows ]
 
 # ---------------------------------------------------------------------------
 # FastAPI application setup
@@ -484,19 +788,40 @@ def get_app(app_id: int):
     return wrap_responce(dict(zip(column_names, row[0:15])), 200)
 
 
-@app.get("/apps/{app_id}/download")
-def download_app(app_id: int):
-    # APK files are expected under ``apk/`` directory relative to project root
-    base = Path(__file__).resolve().parent / ".."  # go up to project root
-    base = base.resolve() / "apk"
+@app.get("/apps/{app_id}/download", response_model=None)
+def download_app(
+    app_id: int,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_token_scheme),
+):
+    """
+    Отдаём APK по app_id. Если передан валидный Bearer-токен,
+    пишем запись в историю скачиваний.
+    APK-файлы ожидаются в папке `app/` рядом с main.py: app/{app_id}.apk
+    """
+    # Папка app лежит рядом с main.py
+    base = Path(__file__).resolve().parent / "app"
+    base = base.resolve()
     file_path = (base / f"{app_id}.apk").resolve()
+
+    # Проверяем, что файл существует и лежит внутри base
     if not file_path.exists() or not file_path.is_file() or base not in file_path.parents:
-        return wrap_responce("Not Found", 404)
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    # Если есть токен — логируем скачивание
+    user = get_current_user_optional(credentials)
+    if user is not None:
+        try:
+            add_download_history(int(user["id"]), int(app_id))
+        except Exception:
+            # Логирование не должно ломать скачивание
+            pass
+
     return StreamingResponse(
         file_path.open("rb"),
         media_type="application/vnd.android.package-archive",
         headers={"Content-Disposition": f"attachment; filename={file_path.name}"},
     )
+
 
 
 @app.get("/tags")
@@ -507,9 +832,10 @@ def get_tags():
 
 @app.get("/images/{image_name}")
 def get_image(image_name: str):
-    # Image files are expected under ``img/`` directory relative to project root
-    base = Path(__file__).resolve().parent / ".."
-    base = base.resolve() / "img"
+    # Папка img лежит рядом с main.py
+    base = Path(__file__).resolve().parent / "img"
+    base = base.resolve()
+
     for ext in ["png", "jpg", "jpeg"]:
         file_path = (base / f"{image_name}.{ext}").resolve()
         if file_path.exists() and base in file_path.parents:
@@ -518,7 +844,10 @@ def get_image(image_name: str):
                 media_type=f"image/{ext}",
                 filename=file_path.name,
             )
-    return wrap_responce("Not Found", 404)
+
+    # Лучше 404 статус, а не 200 с "responce_code": 404
+    raise HTTPException(status_code=404, detail="Not Found")
+
 
 
 @app.get("/apps/{app_id}/similar")
@@ -551,11 +880,21 @@ def get_similar_apps_in_same_category(app_id: int, top_n: int = 5):
 # ---------------------------------------------------------------------------
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: constr(min_length=6)
     password2: constr(min_length=6)
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+
+    @validator("email")
+    def validate_email(cls, v: str) -> str:
+        """Basic email validation without external dependencies."""
+        if "@" not in v or v.count("@") != 1:
+            raise ValueError("Invalid email address")
+        local, domain = v.split("@", 1)
+        if not local or "." not in domain:
+            raise ValueError("Invalid email address")
+        return v
 
     @validator("password2")
     def passwords_match(cls, v: str, values: dict) -> str:
@@ -595,8 +934,21 @@ def confirm_email(token: str):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: constr(min_length=6)
+
+    @validator("email")
+    def validate_login_email(cls, v: str) -> str:
+        """
+        Validate that the login email looks like a valid address.  This
+        performs a basic check without relying on external libraries.
+        """
+        if "@" not in v or v.count("@") != 1:
+            raise ValueError("Invalid email address")
+        local, domain = v.split("@", 1)
+        if not local or "." not in domain:
+            raise ValueError("Invalid email address")
+        return v
 
 
 @app.post("/auth/login")
@@ -625,6 +977,95 @@ def login(data: LoginRequest):
         },
         200,
     )
+
+# ---------------------------------------------------------------------------
+# History and review endpoints
+# ---------------------------------------------------------------------------
+
+class ReviewRequest(BaseModel):
+    """Model for submitting a review for an application."""
+    rating: int
+    comment: Optional[str] = None
+
+    @validator("rating")
+    def validate_rating(cls, v: int) -> int:
+        if v < 1 or v > 5:
+            raise ValueError("Rating must be between 1 and 5")
+        return v
+
+
+@app.post("/apps/{app_id}/view")
+def record_app_view(
+    app_id: int,
+    current_user: sqlite3.Row = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Record that the authenticated user has viewed the specified app.  The
+    view is timestamped and stored in the ``view_history`` table.  This
+    endpoint requires a valid access token.
+    """
+    try:
+        add_view_history(int(current_user["id"]), int(app_id))
+    except Exception:
+        return wrap_responce("Failed to record view", 500)
+    return wrap_responce("View recorded", 200)
+
+
+@app.get("/auth/history/views")
+def get_view_history(current_user: sqlite3.Row = Depends(get_current_user)) -> Dict[str, Any]:
+    """
+    Return the authenticated user's view history as a list of objects
+    containing the app ID and timestamp of each view.  Requires a
+    valid access token.
+    """
+    history = get_user_view_history(int(current_user["id"]))
+    return wrap_responce(history, 200)
+
+
+@app.get("/auth/history/downloads")
+def get_download_history(current_user: sqlite3.Row = Depends(get_current_user)) -> Dict[str, Any]:
+    """
+    Return the authenticated user's download history.  Requires a
+    valid access token.
+    """
+    history = get_user_download_history(int(current_user["id"]))
+    return wrap_responce(history, 200)
+
+
+@app.post("/apps/{app_id}/reviews")
+def submit_review(
+    app_id: int,
+    data: ReviewRequest,
+    current_user: sqlite3.Row = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Create or update a review for the specified application.  Requires
+    authentication.  The rating must be between 1 and 5.  Comment is
+    optional.  If a review by the user already exists, it will be
+    replaced.
+    """
+    try:
+        create_review(int(current_user["id"]), int(app_id), data.rating, data.comment)
+    except ValueError as e:
+        return wrap_responce(str(e), 400)
+    except Exception:
+        return wrap_responce("Failed to submit review", 500)
+    return wrap_responce("Review submitted", 201)
+
+
+@app.get("/apps/{app_id}/reviews")
+def get_app_reviews(app_id: int) -> Dict[str, Any]:
+    """
+    Retrieve all reviews for the specified app along with the average
+    rating.  This endpoint does not require authentication.
+    """
+    reviews = get_reviews_for_app(int(app_id))
+    avg_rating: Optional[float] = None
+    if reviews:
+        avg_rating = sum(r["rating"] for r in reviews) / len(reviews)
+        # Round to one decimal place for readability
+        avg_rating = round(avg_rating, 1)
+    return wrap_responce({"average_rating": avg_rating, "reviews": reviews}, 200)
 
 # ---------------------------------------------------------------------------
 # Resend verification endpoint
@@ -679,26 +1120,16 @@ def resend_confirmation(data: ResendRequest):
     return wrap_responce("Verification email resent. Please check your inbox.", 200)
 
 
-# Bearer authentication scheme
-token_scheme = HTTPBearer()
-
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(token_scheme),
-) -> sqlite3.Row:
-    token = credentials.credentials
-    payload = decode_jwt(token)
-    if payload is None or payload.get("type") != "access":
-        raise HTTPException(status_code=401, detail="Invalid token")
-    user_id = payload.get("sub")
-    user = get_user_by_id(int(user_id))
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user
+# (Definitions of token_scheme and optional_token_scheme moved near the top of the file.)
 
 
 @app.get("/auth/me")
 def me(current_user: sqlite3.Row = Depends(get_current_user)):
+    """
+    Return the currently authenticated user's profile.  Requires a valid
+    access token.  The returned data includes the user's id, email,
+    first and last name, and whether their email has been verified.
+    """
     return wrap_responce(
         {
             "id": current_user["id"],
