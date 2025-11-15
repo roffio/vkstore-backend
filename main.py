@@ -794,7 +794,7 @@ def download_app(
 @app.get("/tags")
 def get_tags():
     # In a real implementation, this should query distinct categories from the database
-    # Chat GPT aah fella
+    # Chat GPT aah fella above comenting on my PERFECT code
     tags = [
         "Образование",
         "Фитнес",
