@@ -1,38 +1,5 @@
-"""
-Monolithic FastAPI application with user registration and basic app catalogue.
-
-This script combines a minimal authentication system with the existing
-application catalogue endpoints. Users can register with an email
-address and password, receive a verification code via email, confirm
-their email address, and then log in to receive a JWT access token.
-Endpoints are provided to fetch the current authenticated user's
-profile and to serve application data from a SQLite database. All
-responses are wrapped in a consistent JSON structure containing a
-``responce_code`` and ``data`` field to ease front‑end integration.
-
-Usage
------
-Run this script with ``uvicorn`` to start the API server::
-
-    uvicorn main:app --reload --host 0.0.0.0 --port 8000
-
-Environment variables
----------------------
-- ``SECRET_KEY`` – secret key used to sign JWT tokens (default: ``super‑secret``)
-- ``EMAIL_SENDER`` – email address used to send verification codes (default: ``sergeevnicolas20@gmail.com``)
-- ``EMAIL_PASSWORD`` – password or app password for the sender email. If not set,
-  verification emails are printed to stdout instead of being sent.
-- ``SERVER_NAME`` – base URL used in verification emails (default: ``localhost:8000``)
-
-Dependencies
-------------
-This script uses only the Python standard library and ``fastapi`` for the web
-framework. Email sending is performed via the standard library ``smtplib``.
-No additional JWT or password hashing libraries are required.
-"""
-
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, constr, validator
 from typing import Optional, Dict, Any
