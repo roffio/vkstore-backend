@@ -794,7 +794,41 @@ def download_app(
 @app.get("/tags")
 def get_tags():
     # In a real implementation, this should query distinct categories from the database
-    return wrap_responce(["sport", "games"], 200)
+    # Chat GPT aah fella
+    tags = [
+        "Образование",
+        "Фитнес",
+        "Здоровье",
+        "Музыка",
+        "Фотография",
+        "Социальные сети",
+        "Путешествия",
+        "Игры",
+        "Продуктивность",
+        "Наука",
+        "Коммуникация",
+        "Развлечения",
+        "Финансы",
+        "Бизнес",
+        "Аркады",
+        "Пазлы",
+        "Многопользовательские",
+        "Экшен",
+        "Стратегии",
+        "MOBA",
+        "Спорт",
+        "Гонки",
+        "AR / Приключения",
+        "Приключения",
+        "Утилиты",
+        "Маркетплейс",
+        "Лайфстайл",
+        "Навигация",
+        "Транспорт",
+        "Доставка еды"
+    ]
+
+    return wrap_responce(tags, 200)
 
 
 @app.get("/images/{image_name}")
