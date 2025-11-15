@@ -134,7 +134,8 @@ def _initialize_user_tables() -> None:
                 first_name TEXT,
                 last_name TEXT,
                 is_email_verified INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                achievements TEXT DEFAULT '' 
             );
             """
         )
@@ -1265,3 +1266,76 @@ def create_app(data: AppCreate):
     conn.close()
 
     return wrap_responce({"AppID": new_id}, 201)
+
+
+
+def get_user_achievements(user_id: int) -> list[str]:
+    user = get_user_by_id(user_id)
+    if not user:
+        return []
+    return [a for a in (user.get("achievements") or "").split(",") if a.strip()]
+
+
+def add_user_achievement(user_id: int, achievement: str) -> None:
+    achievements = get_user_achievements(user_id)
+    if achievement not in achievements:
+        achievements.append(achievement)
+        new_str = ",".join(achievements)
+        with sqlite3.connect(DB_FILENAME) as conn:
+            conn.execute(
+                "UPDATE users SET achievements = ? WHERE id = ?",
+                (new_str, user_id),
+            )
+            conn.commit()
+
+
+class AchievementRequest(BaseModel):
+    achievement: str
+
+MAX_RETRIES = 5
+RETRY_DELAY = 0.1
+
+@app.post("/users/{user_id}/achievements/add")
+def add_achievement(user_id: int, achievement: str):
+    for attempt in range(MAX_RETRIES):
+        try:
+            with sqlite3.connect(DB_FILENAME, timeout=5) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.execute("SELECT achievements FROM users WHERE id = ?", (user_id,))
+                row = cur.fetchone()
+                if row is None:
+                    return wrap_responce("User not found", 404)
+
+                current_ach = row["achievements"] or ""
+                achievements_set = set(filter(None, current_ach.split(",")))
+                achievements_set.add(achievement.strip())
+                new_ach = ",".join(sorted(achievements_set))
+
+                conn.execute("UPDATE users SET achievements = ? WHERE id = ?", (new_ach, user_id))
+                conn.commit()
+            return wrap_responce("Achievement added", 200)
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e):
+                time.sleep(RETRY_DELAY)
+            else:
+                raise
+    return wrap_responce("Database is locked, try again later", 500)
+
+
+
+@app.get("/users/{user_id}/achievements")
+def get_achievements(
+    user_id: int,
+    # current_user: sqlite3.Row = Depends(get_current_user)
+):
+    with sqlite3.connect(DB_FILENAME) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("SELECT achievements FROM users WHERE id = ?", (user_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        achievements_list = [a.strip() for a in (row["achievements"] or "").split(",") if a.strip()]
+        conn.commit()
+
+    return {"responce_code": 200, "data": achievements_list}
