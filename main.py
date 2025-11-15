@@ -8,8 +8,23 @@ import os
 from pathlib import Path
 import zipfile
 import io
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Пример FastAPI приложения")
+
+origins = [
+    "https://www.commit-store.ru",
+    "http://localhost:5173",
+    "http://localhost:3000"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def wrap_responce(responce, code):
