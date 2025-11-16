@@ -1,86 +1,64 @@
-## RuStore MVP API - Эндпоинты (Refined + Full Comments)
+# RuStore MVP API
 
-Реализованы все эндпоинты, кроме 2.1, 6(6.1-6.5.2)
+Эта документация описывает текущие эндпоинты FastAPI приложения для управления каталогом приложений, пользователями и их действиями (регистрация, авторизация, просмотр приложений, загрузка APK и т.д.).
 
-Результаты всех запросов обернуты в объект:
+Все ответы обернуты в JSON следующего формата:
 
 ```json
 {
-  "response_code": 200,
+  "responce_code": <HTTP code>,
   "data": {}
 }
 ```
 
-Сервер жив, если по запросу
+---
+
+## 1. Пинг сервера
+
 ```
 GET /ping
 ```
-вовращается
-```
+
+**Ответ:**
+
+```json
 {
-    "responce_code":200,
-    "data":"Pong"
+  "responce_code": 200,
+  "data": "Pong"
 }
 ```
+
 ---
 
-## 1. Список приложений с фильтрацией и поиском
+## 2. Приложения
+
+### 2.1. Список приложений
 
 ```
 GET /apps
 ```
 
-**Query-параметры (опционально):**
+**Параметры (опционально):**
 
-* `tag` - категория приложения
-* `filter` - фильтры: `new`, `popular`, `redaction`
-* `search` - строка поиска по названию
-* `sort` - сортировка по `downloads`, `rating`
-* `order` - по возрастанию/убыванию: `asc`/`desc`
+* `tag` - фильтр по категории
+* `filter` - `new`, `popular`, `redaction`
+* `search` - поиск по названию/описанию/разработчику
+* `sort` - поле для сортировки (`Downloads`, `Rating`)
+* `order` - `asc` или `desc`
 
 **Пример:**
 
 ```
-GET  /apps?tag=games&filter=popular&search=roffio
+GET /apps?tag=Игры&filter=popular&search=roffio
 ```
 
-**Ответ JSON:**
-
-```json
-{
-  "responce_code": 200,
-  "data": [
-    {
-      "AppID": 1,
-      "AppName": "Generic App 1",
-      "SmallIconID": 1,
-      "BigIconID": 1,
-      "AppCardScreenshotsIDs": null,
-      "Rating": 4,
-      "Downloads": 100000,
-      "Categories": "games",
-      "DeveloperName": "roffio",
-      "DeveloperID": 1,
-      "ReleaseDate": "2025-11-14T18:30:00Z",
-      "AgeRestriction": "0+",
-      "Description": "A very VERY good app not a test at all don't mind the LORES IPSUM\r\n",
-      "EditorChoice": 0,
-      "SimilarApps": ""
-    }
-  ]
-}
-```
-
----
-
-## 2. Карточка конкретного приложения
+### 2.2. Карточка приложения
 
 ```
 GET /apps/{app_id}
-Authorization: Bearer <VK_ACCESS_TOKEN> (опционально)
 ```
 
-**Ответ JSON:**
+**Ответ:**
 
 ```json
 {
@@ -98,256 +76,284 @@ Authorization: Bearer <VK_ACCESS_TOKEN> (опционально)
     "DeveloperID": 1,
     "ReleaseDate": "2025-11-14T18:30:00Z",
     "AgeRestriction": "0+",
-    "Description": "The ORIGINAL\t\t\t\tstarwalker",
+    "Description": "The ORIGINAL starwalker",
     "EditorChoice": 0,
     "SimilarApps": ""
   }
 }
 ```
-(Коментарии пока не делал)
----
 
-## 2.1. Полная загрузка комментариев (WIP)
+### 2.3. Скачивание APK
 
 ```
-GET /apps/{app_id}/load-comments?page=2&limit=20
-Authorization: Bearer <VK_ACCESS_TOKEN>
+GET /apps/{app_id}/download
 ```
 
-**Ответ JSON:**
+Возвращает APK через поток. Если передан токен, записывает событие в историю загрузок.
+
+### 2.4. Список категорий (тэгов)
+
+```
+GET /tags
+```
+
+**Ответ:**
 
 ```json
 {
-  "response_code": 200,
+  "responce_code": 200,
+  "data": ["Игры", "Финансы", "Социальные сети", ...]
+}
+```
+
+### 2.5. Изображения
+
+```
+GET /images/{image_name}
+```
+
+Возвращает файл изображения. Поддерживаются форматы PNG, JPG, JPEG.
+
+### 2.6. Похожие приложения
+
+```
+GET /apps/{app_id}/similar?top_n=5
+```
+
+Возвращает список приложений с похожим описанием в той же категории, сортированных по схожести.
+
+**Ответ:**
+
+```json
+{
+  "responce_code": 200,
+  "data": [
+    {"AppID": 10, "score": 0.85},
+    {"AppID": 15, "score": 0.80}
+  ]
+}
+```
+
+### 2.7. Рецензии на приложение
+
+#### 2.7.1. Получение рецензий
+
+```
+GET /apps/{app_id}/reviews
+```
+
+**Ответ:**
+
+```json
+{
+  "responce_code": 200,
   "data": {
-    "page": 2,
-    "limit": 20,
-    "total": 125,
-    "comments": [
+    "average_rating": 4.2,
+    "reviews": [
       {
-        "comment_id": 110,
-        "vk_id": "vk777",
-        "text": "Не понравилось обновление.",
-        "likes": 2,
-        "dislikes": 5,
-        "created_at": "2025-11-15T12:00:00Z"
+        "rating": 5,
+        "comment": "Отличное приложение!",
+        "created_at": "2025-11-14T18:30:00Z",
+        "reviewer": "Ivan Ivanov"
       }
     ]
   }
 }
 ```
 
+#### 2.7.2. Создание/обновление рецензии
+
+```
+POST /apps/{app_id}/reviews
+```
+
+**Тело запроса:**
+
+```json
+{
+  "rating": 5,
+  "comment": "Очень удобное приложение"
+}
+```
+
+**Требуется токен**. Ответ с кодом 201 при успешной отправке.
+
+### 2.8. Фиксация просмотра
+
+```
+POST /apps/{app_id}/view
+```
+
+Записывает событие просмотра приложения текущим пользователем.
+
 ---
 
-## 3. Загрузка APK приложения
+## 3. Аутентификация
+
+### 3.1. Регистрация
 
 ```
-GET /apps/{app_id}/download
+POST /auth/register
 ```
 
-Возвращает APK через поток (`StreamingResponse`).
+**Тело запроса:**
 
-## 4. Список категорий (тэгов)
+```json
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "password2": "password123",
+  "first_name": "Ivan",
+  "last_name": "Ivanov"
+}
+```
+
+После регистрации отправляется email для подтверждения.
+
+### 3.2. Подтверждение email
 
 ```
-GET /tags
+GET /auth/confirm-email?token=<token>
 ```
 
-**Ответ JSON:**
+### 3.3. Повторная отправка кода
+
+```
+POST /auth/resend-confirmation
+```
+
+**Тело запроса:**
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+### 3.4. Вход в систему
+
+```
+POST /auth/login
+```
+
+**Тело запроса:**
+
+```json
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+```
+
+**Ответ:**
 
 ```json
 {
   "responce_code": 200,
-  "data": [
-    "sport",
-    "games"
-  ]
-}
-```
-
----
-
-## 5. Изображения
-
-```
-GET /images/{image_id}
-```
-
-Возвращает бинарный поток изображения. Не забывайте проверять формат
-
-## 6. Пользовательский модуль (VK OAuth) (WIP)
-
-Все защищённые действия требуют токен в заголовке `Authorization: Bearer <VK_ACCESS_TOKEN>`.
-
-### 6.1. Регистрация пользователя
-
-```
-POST /users
-```
-
-**Тело запроса:**
-
-```json
-{ "username": "Ivan" }
-```
-
-**Ответ:**
-
-```json
-{
-  "response_code": 201,
   "data": {
-    "id": 1,
-    "vk_id": "vk123456",
-    "username": "Ivan",
-    "level": 1,
-    "points": 0,
-    "created_at": "2025-11-14T18:30:00Z"
-  }
-}
-```
-
----
-
-### 6.2. Профиль текущего пользователя
-
-```
-GET /users/me
-```
-
----
-
-### 6.3. История посещений и скачиваний
-
-* `POST /apps/{app_id}/visited` — фиксация открытия приложения.
-* `POST /apps/{app_id}/download` — фиксация скачивания.
-  **Ответ JSON:**
-
-```json
-{ "response_code": 200, "data": { "status": "ok", "message": "Visit/Download recorded" } }
-```
-
----
-
-### 6.4. Статистика пользователя
-
-```
-GET /users/me/stats
-```
-
-**Ответ JSON:**
-
-```json
-{
-  "response_code": 200,
-  "data": {
-    "visited_apps_count": 25,
-    "downloaded_apps_count": 5,
-    "visited_apps_ids": [12, 34, 56, 78],
-    "downloaded_apps_ids": [12, 56],
-    "favorite_categories": ["Игры", "Финансы", "Инструменты"],
-    "badges": ["Исследователь игр", "Гуру финансов"],
-    "level": 2,
-    "points": 150
-  }
-}
-```
-
----
-
-### 6.5. Комментарии к приложениям
-
-#### 6.5.1. Добавление комментария
-
-```
-POST /apps/{app_id}/comment
-```
-
-**Тело запроса:**
-
-```json
-{ "text": "Отличное приложение!" }
-```
-
-**Ответ:**
-
-```json
-{ "response_code": 201, "data": { "comment_id": 101, "status": "ok", "message": "Comment added" } }
-```
-
-#### 6.5.2. Получение комментариев
-
-```
-GET /apps/{app_id}/comments
-```
-
-**Ответ JSON:**
-
-```json
-{
-  "response_code": 200,
-  "data": [
-    {
-      "comment_id": 101,
-      "vk_id": "vk123456",
-      "text": "Отличное приложение, очень удобное!",
-      "likes": 5,
-      "dislikes": 0,
-      "created_at": "2025-11-14T18:30:00Z"
-    },
-    {
-      "comment_id": 102,
-      "vk_id": "vk654321",
-      "text": "Можно улучшить интерфейс",
-      "likes": 2,
-      "dislikes": 1,
-      "created_at": "2025-11-14T19:10:00Z"
+    "access_token": "<token>",
+    "refresh_token": "<refresh_token>",
+    "token_type": "bearer",
+    "user": {
+      "id": 1,
+      "email": "user@example.com",
+      "first_name": "Ivan",
+      "last_name": "Ivanov",
+      "is_email_verified": true
     }
-  ]
+  }
 }
 ```
 
-#### 6.5.3. Лайк/дизлайк комментария
+### 3.5. Получение профиля
 
 ```
-POST /comments/{comment_id}/vote
+GET /auth/me
+```
+
+**Требуется токен.**
+
+### 3.6. История пользователя
+
+```
+GET /auth/history/views
+GET /auth/history/downloads
+```
+
+Возвращает просмотренные и загруженные приложения текущего пользователя.
+
+---
+
+## 4. Загрузка файлов (для администратора)
+
+### 4.1. Изображения
+
+```
+POST /images/upload-sequential
+```
+
+Загружает изображение с автоматической последовательной нумерацией.
+
+### 4.2. APK
+
+```
+POST /apk/upload-sequential
+```
+
+Загружает APK с автоматической последовательной нумерацией.
+
+### 4.3. Создание приложения
+
+```
+POST /apps/create
 ```
 
 **Тело запроса:**
 
 ```json
-{ "vote": "like" } // или "dislike"
+{
+  "AppName": "My App",
+  "SmallIconID": "1",
+  "BigIconID": "2",
+  "Categories": "Игры",
+  "DeveloperName": "Dev",
+  "Rating": 4.5
+}
 ```
 
-**Ответ JSON:**
+**Ответ:**
 
 ```json
-{ "response_code": 200, "data": { "status": "ok", "message": "Vote recorded", "likes": 6, "dislikes": 0 } }
+{
+  "responce_code": 201,
+  "data": {"AppID": 101}
+}
 ```
 
 ---
 
-## 7. Ошибки и коды
+## 5. Ошибки
 
 ```json
 {
-  "response_code": 400,
+  "responce_code": 400,
   "data": {"error": "Bad Request"}
 }
 {
-  "response_code": 401,
-  "data": {"error": "Unauthorized - Invalid or missing VK token"}
+  "responce_code": 401,
+  "data": {"error": "Unauthorized - Invalid or missing token"}
 }
 {
-  "response_code": 403,
+  "responce_code": 403,
   "data": {"error": "Forbidden - Action not allowed"}
 }
 {
-  "response_code": 404,
+  "responce_code": 404,
   "data": {"error": "Not Found"}
 }
 {
-  "response_code": 500,
+  "responce_code": 500,
   "data": {"error": "Internal Server Error"}
 }
+
 ```

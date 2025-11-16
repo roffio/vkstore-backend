@@ -1,38 +1,5 @@
-"""
-Monolithic FastAPI application with user registration and basic app catalogue.
-
-This script combines a minimal authentication system with the existing
-application catalogue endpoints. Users can register with an email
-address and password, receive a verification code via email, confirm
-their email address, and then log in to receive a JWT access token.
-Endpoints are provided to fetch the current authenticated user's
-profile and to serve application data from a SQLite database. All
-responses are wrapped in a consistent JSON structure containing a
-``responce_code`` and ``data`` field to ease front‑end integration.
-
-Usage
------
-Run this script with ``uvicorn`` to start the API server::
-
-    uvicorn main:app --reload --host 0.0.0.0 --port 8000
-
-Environment variables
----------------------
-- ``SECRET_KEY`` – secret key used to sign JWT tokens (default: ``super‑secret``)
-- ``EMAIL_SENDER`` – email address used to send verification codes (default: ``sergeevnicolas20@gmail.com``)
-- ``EMAIL_PASSWORD`` – password or app password for the sender email. If not set,
-  verification emails are printed to stdout instead of being sent.
-- ``SERVER_NAME`` – base URL used in verification emails (default: ``localhost:8000``)
-
-Dependencies
-------------
-This script uses only the Python standard library and ``fastapi`` for the web
-framework. Email sending is performed via the standard library ``smtplib``.
-No additional JWT or password hashing libraries are required.
-"""
-
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, constr, validator
 from typing import Optional, Dict, Any
@@ -941,7 +908,41 @@ def download_app(
 @app.get("/tags")
 def get_tags():
     # In a real implementation, this should query distinct categories from the database
-    return wrap_responce(["sport", "games"], 200)
+    # Chat GPT aah fella above comenting on my PERFECT code
+    tags = [
+        "Образование",
+        "Фитнес",
+        "Здоровье",
+        "Музыка",
+        "Фотография",
+        "Социальные сети",
+        "Путешествия",
+        "Игры",
+        "Продуктивность",
+        "Наука",
+        "Коммуникация",
+        "Развлечения",
+        "Финансы",
+        "Бизнес",
+        "Аркады",
+        "Пазлы",
+        "Многопользовательские",
+        "Экшен",
+        "Стратегии",
+        "MOBA",
+        "Спорт",
+        "Гонки",
+        "AR / Приключения",
+        "Приключения",
+        "Утилиты",
+        "Маркетплейс",
+        "Лайфстайл",
+        "Навигация",
+        "Транспорт",
+        "Доставка еды"
+    ]
+
+    return wrap_responce(tags, 200)
 
 
 @app.get("/images/{image_name}")
@@ -1338,3 +1339,127 @@ def me(current_user: sqlite3.Row = Depends(get_current_user)):
         },
         200,
     )
+
+
+@app.post("/images/upload-sequential") # Бебебе, да, уязвимо, бюджет не дали
+async def upload_image_sequential(file: UploadFile = File(...)):
+    img_dir = Path(__file__).resolve().parent / "img"
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_files = list(img_dir.glob("*"))
+    max_num = 0
+    for f in existing_files:
+        try:
+            num = int(f.stem)
+            if num > max_num:
+                max_num = num
+        except ValueError:
+            continue
+
+    ext = Path(file.filename).suffix
+    new_num = max_num + 1
+    new_name = f"{new_num}{ext}"
+    file_path = img_dir / new_name
+
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
+    return wrap_responce({"id": new_num}, 201)
+
+
+@app.post("/apk/upload-sequential")
+async def upload_apk(file: UploadFile = File(...)):
+    apk_dir = Path(__file__).resolve().parent / "app"
+    apk_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_files = list(apk_dir.glob("*"))
+    max_num = 0
+    for f in existing_files:
+        try:
+            num = int(f.stem)
+            if num > max_num:
+                max_num = num
+        except ValueError:
+            continue
+
+    ext = Path(file.filename).suffix
+    new_num = max_num + 1
+    new_name = f"{new_num}{ext}"
+    file_path = apk_dir / new_name
+
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
+    return wrap_responce({"id": new_num}, 201)
+
+
+
+class AppCreate(BaseModel):
+    AppName: str
+    SmallIconID: Optional[str] = None
+    BigIconID: Optional[str] = None
+    AppCardScreenshotsIDs: Optional[str] = None
+    Rating: Optional[float] = 0
+    Downloads: Optional[int] = 0
+    Categories: Optional[str] = None
+    DeveloperName: Optional[str] = None
+    DeveloperID: Optional[int] = None
+    ReleaseDate: Optional[str] = None  
+    AgeRestriction: Optional[int] = 0
+    Description: Optional[str] = None
+    EditorChoice: Optional[int] = 0
+    SimilarApps: Optional[str] = None
+    CommentListID: Optional[int] = None
+
+
+@app.post("/apps/create")
+def create_app(data: AppCreate):
+
+    conn = sqlite3.connect(DB_FILENAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO Apps (
+            AppName,
+            SmallIconID,
+            BigIconID,
+            AppCardScreenshotsIDs,
+            Rating,
+            Downloads,
+            Categories,
+            DeveloperName,
+            DeveloperID,
+            ReleaseDate,
+            AgeRestriction,
+            Description,
+            EditorChoice,
+            SimilarApps,
+            CommentListID
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            data.AppName,
+            data.SmallIconID,
+            data.BigIconID,
+            data.AppCardScreenshotsIDs,
+            data.Rating,
+            data.Downloads,
+            data.Categories,
+            data.DeveloperName,
+            data.DeveloperID,
+            data.ReleaseDate,
+            data.AgeRestriction,
+            data.Description,
+            data.EditorChoice,
+            data.SimilarApps,
+            data.CommentListID,
+        )
+    )
+
+    new_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    return wrap_responce({"AppID": new_id}, 201)
