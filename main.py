@@ -168,15 +168,13 @@ def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 def send_verification_email(to_email: str, token: str, expires_in_minutes: int = 10) -> None:
-    verify_url = f"https://{SERVER_NAME}/auth/confirm-email?token={token}"
     msg = EmailMessage()
     msg["Subject"] = "Email verification"
     msg["From"] = EMAIL_SENDER
     msg["To"] = to_email
     text_body = (
         "Hello,\n\n"
-        "Please verify your email address by clicking the link below or use the verification code provided.\n"
-        f"Verification link: {verify_url}\n"
+        "Please verify your email address using the verification code provided.\n"
         f"Verification code: {token}\n\n"
         f"This code will expire in {expires_in_minutes} minutes.\n"
         "If you did not sign up, please ignore this email.\n"
@@ -186,10 +184,7 @@ def send_verification_email(to_email: str, token: str, expires_in_minutes: int =
     <html>
       <body style="font-family: Arial, sans-serif; color: #333;">
         <h2>Email Confirmation</h2>
-        <p>Please verify your email address by clicking the button below or use the verification code provided.</p>
-        <p style="text-align:center; margin: 20px 0;">
-          <a href="{verify_url}" style="background-color:#4CAF50;color:white;padding:10px 20px;text-decoration:none;border-radius:4px;">Verify Email</a>
-        </p>
+        <p>Please verify your email address using the verification code provided.</p>
         <p>Your verification code:</p>
         <p style="font-size:24px;font-weight:bold;letter-spacing:2px;">{token}</p>
         <p style="margin-top:20px;">This code will expire in {expires_in_minutes} minutes.</p>
@@ -208,6 +203,7 @@ def send_verification_email(to_email: str, token: str, expires_in_minutes: int =
     else:
         print("Sending email to", to_email)
         print(msg)
+
 
 def get_user_by_email(email: str) -> Optional[sqlite3.Row]:
     with sqlite3.connect(DB_FILENAME) as conn:
