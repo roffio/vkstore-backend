@@ -486,18 +486,11 @@ def add_view_history(user_id: int, app_id: int) -> None:
         conn.commit()
 
 
-def add_download_history(user_id: int, app_id: int) -> None:
-    """
-    Record that the specified user has downloaded the given application at the
-    current UTC time.  The event is stored in the ``download_history`` table.
-    """
-    timestamp = datetime.utcnow().isoformat()
-    with sqlite3.connect(DB_FILENAME) as conn:
-        conn.execute(
-            "INSERT INTO download_history (user_id, app_id, downloaded_at) VALUES (?, ?, ?)",
-            (user_id, app_id, timestamp),
-        )
-        conn.commit()
+
+
+
+
+
 
 
 def create_review(user_id: int, app_id: int, rating: int, comment: Optional[str]) -> None:
@@ -568,32 +561,140 @@ def get_reviews_for_app(app_id: int) -> list[dict]:
 
 def get_user_view_history(user_id: int) -> list[dict]:
     """
-    Fetch the viewing history for a given user.  Returns a list of
-    dictionaries containing the AppID and timestamp of each view.
+    Fetch the viewing history for a given user.
+
+    Возвращает список словарей с полными данными приложения
+    (в том же формате, что /apps) + полем viewed_at.
     """
     with sqlite3.connect(DB_FILENAME) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
-            "SELECT app_id, viewed_at FROM view_history WHERE user_id = ? ORDER BY viewed_at DESC",
+            """
+            SELECT
+                vh.app_id,
+                vh.viewed_at,
+                a.AppID,
+                a.AppName,
+                a.SmallIconID,
+                a.BigIconID,
+                a.AppCardScreenshotsIDs,
+                a.Rating,
+                a.Downloads,
+                a.Categories,
+                a.DeveloperName,
+                a.DeveloperID,
+                a.ReleaseDate,
+                a.AgeRestriction,
+                a.Description,
+                a.EditorChoice,
+                a.SimilarApps
+            FROM view_history vh
+            JOIN Apps a ON a.AppID = vh.app_id
+            WHERE vh.user_id = ?
+            ORDER BY vh.viewed_at DESC
+            """,
             (user_id,),
         )
         rows = cur.fetchall()
-    return [ {"app_id": row[0], "viewed_at": row[1]} for row in rows ]
+
+    # те же поля, что и в /apps (без CommentListID)
+    column_names = [
+        "AppID",
+        "AppName",
+        "SmallIconID",
+        "BigIconID",
+        "AppCardScreenshotsIDs",
+        "Rating",
+        "Downloads",
+        "Categories",
+        "DeveloperName",
+        "DeveloperID",
+        "ReleaseDate",
+        "AgeRestriction",
+        "Description",
+        "EditorChoice",
+        "SimilarApps",
+    ]
+
+    history: list[dict] = []
+    for row in rows:
+        viewed_at = row[1]        # vh.viewed_at
+        app_fields = row[2:17]    # 15 полей из таблицы Apps
+        app_data = dict(zip(column_names, app_fields))
+        app_data["viewed_at"] = viewed_at
+        history.append(app_data)
+
+    return history
+
 
 
 def get_user_download_history(user_id: int) -> list[dict]:
     """
-    Fetch the download history for a given user.  Returns a list of
-    dictionaries containing the AppID and timestamp of each download.
+    Fetch the download history for a given user.
+
+    Возвращает список словарей с полными данными приложения
+    (в том же формате, что /apps) + полем downloaded_at.
     """
     with sqlite3.connect(DB_FILENAME) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
-            "SELECT app_id, downloaded_at FROM download_history WHERE user_id = ? ORDER BY downloaded_at DESC",
+            """
+            SELECT
+                dh.app_id,
+                dh.downloaded_at,
+                a.AppID,
+                a.AppName,
+                a.SmallIconID,
+                a.BigIconID,
+                a.AppCardScreenshotsIDs,
+                a.Rating,
+                a.Downloads,
+                a.Categories,
+                a.DeveloperName,
+                a.DeveloperID,
+                a.ReleaseDate,
+                a.AgeRestriction,
+                a.Description,
+                a.EditorChoice,
+                a.SimilarApps
+            FROM download_history dh
+            JOIN Apps a ON a.AppID = dh.app_id
+            WHERE dh.user_id = ?
+            ORDER BY dh.downloaded_at DESC
+            """,
             (user_id,),
         )
         rows = cur.fetchall()
-    return [ {"app_id": row[0], "downloaded_at": row[1]} for row in rows ]
+
+    # те же поля, что и в /apps (без CommentListID)
+    column_names = [
+        "AppID",
+        "AppName",
+        "SmallIconID",
+        "BigIconID",
+        "AppCardScreenshotsIDs",
+        "Rating",
+        "Downloads",
+        "Categories",
+        "DeveloperName",
+        "DeveloperID",
+        "ReleaseDate",
+        "AgeRestriction",
+        "Description",
+        "EditorChoice",
+        "SimilarApps",
+    ]
+
+    history: list[dict] = []
+    for row in rows:
+        downloaded_at = row[1]          # dh.downloaded_at
+        app_fields = row[2:17]          # 15 полей из таблицы Apps
+        app_data = dict(zip(column_names, app_fields))
+        app_data["downloaded_at"] = downloaded_at
+        history.append(app_data)
+
+    return history
+
 
 # ---------------------------------------------------------------------------
 # FastAPI application setup
@@ -788,6 +889,12 @@ def get_app(app_id: int):
     return wrap_responce(dict(zip(column_names, row[0:15])), 200)
 
 
+from pathlib import Path
+from typing import Optional
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPAuthorizationCredentials
+from fastapi.responses import StreamingResponse
+
 @app.get("/apps/{app_id}/download", response_model=None)
 def download_app(
     app_id: int,
@@ -807,6 +914,9 @@ def download_app(
     if not file_path.exists() or not file_path.is_file() or base not in file_path.parents:
         raise HTTPException(status_code=404, detail="Not Found")
 
+    # Размер файла для Content-Length
+    file_size = file_path.stat().st_size
+
     # Если есть токен — логируем скачивание
     user = get_current_user_optional(credentials)
     if user is not None:
@@ -819,8 +929,12 @@ def download_app(
     return StreamingResponse(
         file_path.open("rb"),
         media_type="application/vnd.android.package-archive",
-        headers={"Content-Disposition": f"attachment; filename={file_path.name}"},
+        headers={
+            "Content-Disposition": f"attachment; filename={file_path.name}",
+            "Content-Length": str(file_size),
+        },
     )
+
 
 
 
@@ -852,27 +966,94 @@ def get_image(image_name: str):
 
 @app.get("/apps/{app_id}/similar")
 def get_similar_apps_in_same_category(app_id: int, top_n: int = 5):
-    # Ensure similarity matrix exists and there are apps
+    # если нет данных или матрицы — возвращаем пустой список
     if not apps_data or similarity_matrix is None:
         return wrap_responce([], 200)
-    # Check that app_id exists
+
+    # проверка, что такой app_id есть
     if app_id not in app_ids:
         raise HTTPException(status_code=404, detail="App not found")
+
+    # индекс в списке
     idx = app_ids.index(app_id)
     this_category = categories[idx]
+
+    # если категория пустая — можно вернуть ошибку или пустой список
     if not this_category:
         raise HTTPException(status_code=400, detail="Category unknown for this app")
-    # Filter candidates by same category
-    same_cat_indices = [i for i, cat in enumerate(categories) if cat == this_category and i != idx]
+
+    # кандидаты: только приложения с той же категорией и не сам app_id
+    same_cat_indices = [
+        i for i, cat in enumerate(categories)
+        if cat == this_category and i != idx
+    ]
+
+    # если нет других в категории
     if not same_cat_indices:
         return wrap_responce([], 200)
+
+    # похожесть только с кандидатами
     sims = similarity_matrix[idx, same_cat_indices]
+
+    # сортируем кандидатов по похожести (по убыванию)
     sorted_idx = np.argsort(-sims)
-    result: list[dict] = []
+
+    # берём top_n app_id в порядке убывания похожести
+    recommended_app_ids: list[int] = []
     for rank in sorted_idx[:top_n]:
         i = same_cat_indices[rank]
-        result.append({"AppID": app_ids[i], "score": float(sims[rank])})
+        recommended_app_ids.append(app_ids[i])
+
+    if not recommended_app_ids:
+        return wrap_responce([], 200)
+
+    # теперь достаём из базы полные данные по этим приложениям
+    conn = sqlite3.connect(DB_FILENAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT AppID, AppName, SmallIconID, BigIconID, AppCardScreenshotsIDs,
+                  Rating, Downloads, Categories, DeveloperName, DeveloperID,
+                  ReleaseDate, AgeRestriction, Description, EditorChoice,
+                  SimilarApps, CommentListID
+           FROM Apps
+           WHERE AppID IN ({placeholders})""".format(
+            placeholders=",".join("?" for _ in recommended_app_ids)
+        ),
+        tuple(recommended_app_ids),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    column_names = [
+        "AppID",
+        "AppName",
+        "SmallIconID",
+        "BigIconID",
+        "AppCardScreenshotsIDs",
+        "Rating",
+        "Downloads",
+        "Categories",
+        "DeveloperName",
+        "DeveloperID",
+        "ReleaseDate",
+        "AgeRestriction",
+        "Description",
+        "EditorChoice",
+        "SimilarApps",
+    ]
+
+    # кладём в dict по AppID, чтобы восстановить порядок по похожести
+    rows_by_id = {row[0]: row for row in rows}
+
+    result: list[dict] = []
+    for app_id_rec in recommended_app_ids:
+        row = rows_by_id.get(app_id_rec)
+        if not row:
+            continue
+        result.append(dict(zip(column_names, row[0:15])))
+
     return wrap_responce(result, 200)
+
 
 
 # ---------------------------------------------------------------------------
@@ -955,11 +1136,11 @@ class LoginRequest(BaseModel):
 def login(data: LoginRequest):
     user = get_user_by_email(data.email.lower())
     if user is None or user["hashed_password"] is None or user["salt"] is None:
-        return wrap_responce("Invalid email or password", 401)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user["is_email_verified"]:
-        return wrap_responce("Email not verified", 403)
+        raise HTTPException(status_code=403, detail="Email is not verified")
     if not verify_password(data.password, user["hashed_password"], user["salt"]):
-        return wrap_responce("Invalid email or password", 401)
+        raise HTTPException(status_code=401, detail="Invalidpassword")
     access_token = create_jwt(user["id"], expires_in=60 * 60)  # 1 hour
     refresh_token = create_refresh_jwt(user["id"], expires_in=60 * 60 * 24 * 7)  # 7 days
     return wrap_responce(
@@ -1020,6 +1201,23 @@ def get_view_history(current_user: sqlite3.Row = Depends(get_current_user)) -> D
     """
     history = get_user_view_history(int(current_user["id"]))
     return wrap_responce(history, 200)
+
+
+@app.post("/apps/{app_id}/downloaded")
+def record_app_download(
+    app_id: int,
+    current_user: sqlite3.Row = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Record that the authenticated user has downloaded the specified app.
+    The download is timestamped and stored in the ``download_history`` table.
+    This endpoint requires a valid access token.
+    """
+    try:
+        add_download_history(int(current_user["id"]), int(app_id))
+    except Exception:
+        return wrap_responce("Failed to record download", 500)
+    return wrap_responce("Download recorded", 200)
 
 
 @app.get("/auth/history/downloads")
